@@ -1,19 +1,19 @@
 import 'phaser';
 
 let game;
-let gameOptions = {
-    slices: 8,
-    slicePrizes: ["A KEY!!!", "50 STARS", "500 STARS", "BAD LUCK!!!", "200 STARS", "100 STARS", "150 STARS", "BAD LUCK!!!"],
-    rotationTime: 3000
-};
 window.onload = function() {
-
     let gameConfig = {
-        type: Phaser.CANVAS,
-        width: 550,
-        height: 550,
-        backgroundColor: 0x880044,
-        scene: [playGame]
+        type: Phaser.AUTO,
+        width: 800,
+        height: 600,
+        physics: {
+            default: 'arcade',
+            arcade: {
+                gravity: {y: 500},
+                debug: false
+            }
+        },
+        scene: [playGame],
     };
     game = new Phaser.Game(gameConfig);
     window.focus();
@@ -21,48 +21,128 @@ window.onload = function() {
     window.addEventListener("resize", resize, false);
 };
 
+let map;
+let player;
+let cursors;
+let groundLayer, coinLayer;
+let text;
+let score = 0;
+
+function collectCoin(sprite, tile) {
+    coinLayer.removeTileAt(tile.x, tile.y); // remove the tile/coin
+    score++; // add 10 points to the score
+    text.setText(score); // set the text to show the current score
+    return false;
+}
+
 class playGame extends Phaser.Scene{
     constructor(){
         super("PlayGame");
     }
-    preload(){
-        this.load.image("wheel", "../assets/wheel.png");
-        this.load.image("pin", "../assets/pin.png");
+    preload() {
+        // map made with Tiled in JSON format
+        this.load.tilemapTiledJSON('map', 'assets/map.json');
+        // tiles in spritesheet
+        this.load.spritesheet('tiles', 'assets/tiles.png', {frameWidth: 70, frameHeight: 70});
+        // simple coin image
+        this.load.image('coin', 'assets/coinGold.png');
+        // player animations
+        this.load.atlas('player', 'assets/player.png', 'assets/player.json');
     }
-    create(){
-        this.wheel = this.add.sprite(game.config.width / 2, game.config.height / 2, "wheel");
-        this.pin = this.add.sprite(game.config.width / 2, game.config.height / 2, "pin");
-        this.prizeText = this.add.text(game.config.width / 2, game.config.height - 20, "Spin the wheel", {
-            font: "bold 32px Arial",
-            align: "center",
-            color: "white"
+
+    create() {
+        // load the map
+        map = this.make.tilemap({key: 'map'});
+
+        // tiles for the ground layer
+        let groundTiles = map.addTilesetImage('tiles');
+        // create the ground layer
+        groundLayer = map.createDynamicLayer('World', groundTiles, 0, 0);
+        // the player will collide with this layer
+        groundLayer.setCollisionByExclusion([-1]);
+
+        // coin image used as tileset
+        let coinTiles = map.addTilesetImage('coin');
+        // add coins as tiles
+        coinLayer = map.createDynamicLayer('Coins', coinTiles, 0, 0);
+
+        // set the boundaries of our game world
+        this.physics.world.bounds.width = groundLayer.width;
+        this.physics.world.bounds.height = groundLayer.height;
+
+        // create the player sprite
+        player = this.physics.add.sprite(200, 200, 'player');
+        player.setBounce(0.2); // our player will bounce from items
+        player.setCollideWorldBounds(true); // don't go out of the map
+
+        // small fix to our player images, we resize the physics body object slightly
+        player.body.setSize(player.width, player.height-8);
+
+        // player will collide with the level tiles
+        this.physics.add.collider(groundLayer, player);
+
+        coinLayer.setTileIndexCallback(17, collectCoin, this);
+        // when the player overlaps with a tile with index 17, collectCoin
+        // will be called
+        this.physics.add.overlap(player, coinLayer);
+
+        // player walk animation
+        this.anims.create({
+            key: 'walk',
+            frames: this.anims.generateFrameNames('player', {prefix: 'p1_walk', start: 1, end: 11, zeroPad: 2}),
+            frameRate: 10,
+            repeat: -1
         });
-        this.prizeText.setOrigin(0.5);
-        this.canSpin = true;
-        this.input.on("pointerdown", this.spinWheel, this);
+        // idle with only one frame, so repeat is not neaded
+        this.anims.create({
+            key: 'idle',
+            frames: [{key: 'player', frame: 'p1_stand'}],
+            frameRate: 10,
+        });
+
+
+        cursors = this.input.keyboard.createCursorKeys();
+
+        // set bounds so the camera won't go outside the game world
+        this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
+        // make the camera follow the player
+        this.cameras.main.startFollow(player);
+
+        // set background color, so the sky is not black
+        this.cameras.main.setBackgroundColor('#ccccff');
+
+        // this text will show the score
+        text = this.add.text(20, 570, '0', {
+            fontSize: '20px',
+            fill: '#ffffff'
+        });
+        // fix the text to the camera
+        text.setScrollFactor(0);
     }
-    spinWheel(){
-        if(this.canSpin){
-            this.prizeText.setText("");
-            let rounds = Phaser.Math.Between(2, 4);
-            let degrees = Phaser.Math.Between(0, 360);
-            let prize = gameOptions.slices - 1 - Math.floor(degrees / (360 / gameOptions.slices));
-            this.canSpin = false;
-            this.tweens.add({
-                  targets: [this.wheel],
-                angle: 360 * rounds + degrees,
-                duration: gameOptions.rotationTime,
-                ease: "Cubic.easeOut",
-                callbackScope: this,
-                onComplete: function(tween){
-                    this.prizeText.setText(gameOptions.slicePrizes[prize]);
-                    this.canSpin = true;
-                }
-            });
+
+    update(time, delta) {
+        if (cursors.left.isDown)
+        {
+            player.body.setVelocityX(-200);
+            player.anims.play('walk', true); // walk left
+            player.flipX = true; // flip the sprite to the left
+        }
+        else if (cursors.right.isDown)
+        {
+            player.body.setVelocityX(200);
+            player.anims.play('walk', true);
+            player.flipX = false; // use the original sprite looking to the right
+        } else {
+            player.body.setVelocityX(0);
+            player.anims.play('idle', true);
+        }
+        // jump
+        if (cursors.up.isDown && player.body.onFloor())
+        {
+            player.body.setVelocityY(-500);
         }
     }
 }
-
 // pure javascript to scale the game
 function resize() {
     let canvas = document.querySelector("canvas");
